@@ -19,6 +19,7 @@ icloud-md push
 - [Why](#why)
 - [Install](#install)
 - [Quick start](#quick-start)
+  * [Signing in with a browser you already have](#signing-in-with-a-browser-you-already-have)
 - [Using Obsidian?](#using-obsidian)
 - [Commands](#commands)
 - [What works today](#what-works-today)
@@ -167,6 +168,29 @@ folder itself (a vault is exactly the kind of thing that gets copied,
 zipped, or synced elsewhere); a cloned folder's own
 `.icloud-md/state.json` only records *which* account it's bound to.
 
+### Signing in with a browser you already have
+
+If the automatic Chromium download can't run on your machine (a locked-down
+VM, a proxy that blocks it) but a Chromium-based browser is already
+installed, point sign-in at it instead:
+
+```bash
+icloud-md --browser-executable /usr/bin/chromium clone ./my-notes
+# or set it once, for every command:
+export ICLOUD_MD_BROWSER_EXECUTABLE=/usr/bin/chromium
+```
+
+It must be the full path to the browser binary, and it is checked up front —
+a path that doesn't exist or isn't executable fails the command before any
+work starts. icloud-md still gives it its own sign-in profile rather than
+touching your everyday one, and if it fails to launch you get that error,
+including anything the browser printed on the way down — nothing is
+downloaded behind your back.
+Playwright is only tested against its own bundled build, so other versions
+are best-effort. Without either setting, nothing changes: the bundled
+browser is downloaded on first use, as above (or ahead of time with
+`icloud-md install-browser`).
+
 ## Using Obsidian?
 
 Good news: I use this tool with Obsidian, too! There are two things you can do to make your experience of using this tool with Obsidian a little more polished:
@@ -221,7 +245,8 @@ freely; they stay on your machine and never look like a note change.
 | `object <list\|show\|delete>` | Record-level plumbing for repairing broken notes: list every raw CloudKit record in your Notes zone with health/reference info, inspect one record in full, or permanently delete one by ID. Run `icloud-md object` with no arguments for the full usage. |
 | `reauthenticate [directory]` | Force a fresh sign-in for a directory's already-bound account. Useful if a session goes stale and silent recovery can't get back in on its own. Refuses if you sign into a different Apple ID than the one the directory was cloned for. |
 | `verify-auth [directory]` | Check whether a directory's bound account session is still valid. |
-| `bug-report --since <duration> [directory]` | Bundle version info, the last error, local sync state, and recent debug-log entries into a file to attach to a GitHub issue (e.g. `--since 2h`). |
+| `bug-report --since <duration> [directory]` | Bundle version info, the last error, local sync state, and recent debug-log entries into a file to attach to a GitHub issue (e.g. `--since 2h`). `--note <file>` narrows it to one note; `--no-state` leaves the sync-state inventory out. |
+| `install-browser` | Download the bundled sign-in browser now instead of on first sign-in — for setting up ahead of time, or retrying a download that failed. |
 
 No `commit`/`branch`/`merge` equivalents exist — the working directory *is*
 the local state, and the git repo you presumably wrapped around it (or the
@@ -255,7 +280,13 @@ resolution live.
   bold/italic/strikethrough/underline/links render to real Markdown on
   `pull`/`clone` and push back as the matching Apple formatting on edit.
   Anything this tool doesn't fully understand about a note's formatting
-  stays read-only rather than risking a bad write.
+  stays read-only rather than risking a bad write. CR, CRLF and LF are
+  treated as line breaks; Markdown uses LF, and pushing an edited note
+  rewrites its line separators as LF while preserving paragraph boundaries.
+  This applies inside note text; CRLF frontmatter remains unsupported.
+  A fresh clone gets this representation immediately. An existing clone is
+  refreshed when iCloud reports a change to that note; a pull with no remote
+  note change leaves its tracked file alone.
 - **Writing to notes shared with you is supported for creates and edits**
   inside a shared folder you have write access to — not just the read
   side. See Known limitations for what's still refused.
@@ -552,19 +583,23 @@ diagnose it, because the diagnosis needs the note's actual bytes.
 
 Don't generate one when:
 
-- **The problem showed up during, or right after, `clone`.** The export always
-  includes this vault's full sync-state inventory (every tracked note, with
+- **The problem showed up during, or right after, `clone`.** An unscoped export
+  carries this vault's full sync-state inventory (every tracked note, with
   titles and paths replaced by aliases), and a `--since` window that covers a
-  clone includes the content of every note that clone downloaded. No time range
-  makes that safe to share.
+  clone carries the content of every note that clone downloaded. No time range
+  makes that safe to share. If you can name the note that came back wrong,
+  `--note` narrows both of those to it and makes the export sendable after
+  all; if you can't, use a substitute.
 - **It reproduces without an account.** A parser or formatter bug that a short
   script against a checkout of this repo can demonstrate needs no export at
   all; the script *is* the report.
 - **It's not about a note.** A rate limit, a network error, a hang, a crash on
   startup, or anything about the session file needs the error text and the
-  relevant debug-log lines, not the vault inventory.
+  relevant debug-log lines, not the vault inventory. `--no-state` bundles
+  exactly that, if you would rather not assemble the excerpt by hand.
 
-In any of those situations, use the substitutes below instead.
+Where neither `--note` nor `--no-state` covers it, use the substitutes below
+instead.
 
 ### What to send instead
 
@@ -609,20 +644,36 @@ icloud-md bug-report --since <duration>
 This will generate a markdown document outlining the state
 of your note clone as well as any recent log messages.
 
+If the problem is in one particular note, narrow the export to it:
+
+```bash
+icloud-md bug-report --since 10m --note "My Note.md"
+```
+
+`--note` (repeatable) keeps only that note's entry in the local-state section,
+along with the folders it sits in and the attachments it owns, and removes
+every record about any other note from the captured log entries before they
+are bundled; the report says how many were left out. This is what makes an
+export sendable in the fresh-`clone` case above, where an unscoped one would
+carry every note in the account. If the problem isn't about any particular
+note at all, `--no-state` leaves the inventory out entirely and bundles only
+the log slice.
+
 > [!WARNING]
 > The bug report intends to remove the most dangerous of PII
 > (e.g. your apple ID, name, email, and internal IDs like
 > your dsid), but it **does not redact the underlying content
 > of a note or table touched by a recent `push`/`pull`/`diff`/`revert`**,
-> and it **always includes this vault's whole sync-state inventory**
-> (aliased, but complete) regardless of the `--since` window.
+> and unless you pass `--note` or `--no-state` it **includes this vault's
+> whole sync-state inventory** (aliased, but complete) regardless of the
+> `--since` window.
 >
 > Users reviewing your report can at least:
 > - See the content you changed in any notes you changed during
 >   the time window you selected your bug report to span.
 > - See the content of any attachments (via a signed URL) in those notes.
 > - See how many notes, folders, and sharers this vault tracks, and the
->   sync metadata for each of them.
+>   sync metadata for each of them - unless the report was narrowed.
 > - Possibly other things, too!
 >
 > As part of the bug report creation process, we create a file
@@ -632,13 +683,14 @@ of your note clone as well as any recent log messages.
 > of what content can be decoded from the bug report you may
 > choose to submit.
 >
-> If you have recently cloned your repository, that export
+> If you have recently cloned your repository, an unscoped export
 > might expose the full content of every single file in
 > your notes! It is recommended that you instead reproduce
 > whatever problem in isolation (a few minutes after
 > doing anything else with your icloud notes on any device)
 > and then narrowly generate a bug report for just the range
-> of time during which your problem occurred.
+> of time during which your problem occurred - and, if you can
+> name the note it happened to, for just that note (`--note`).
 >
 > **Be careful to review the `content-preview.md` file created
 > alongside your bug report to ensure that you are not leaking
