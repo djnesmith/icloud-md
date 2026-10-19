@@ -144,6 +144,44 @@ describe("live sync against a real iCloud account", { concurrency: 1, skip: enab
     assert.equal((await vault.status()).exitCode, 0, "the vault should settle after pushing an edit");
   });
 
+  it("pulls a remote edit into a note renamed locally but not pushed, and the rename then pushes as a move", async () => {
+    const title = run.title("local rename canary");
+    await vault.writeNote("local-rename-before.md", [`# ${title}`, "", "first line", "", "second line", ""].join("\n"));
+    assert.equal((await vault.push()).exitCode, 0);
+    await vault.pull();
+    const noteId = await vault.noteId("local-rename-before.md");
+
+    // Rename here and edit the first line; edit the last line from another
+    // replica, which is the "other device".
+    await vault.renameNote("local-rename-before.md", "local-rename-after.md");
+    const renamedText = await vault.readNote("local-rename-after.md");
+    await vault.writeNote("local-rename-after.md", renamedText.replace("first line", "first line, edited here"));
+    const other = await run.vault("local-rename-other");
+    const otherFile = await other.findByNoteId(noteId);
+    assert.ok(otherFile !== undefined, `the other clone should have the note (${noteId})`);
+    await other.writeNote(otherFile, (await other.readNote(otherFile)).replace("second line", "second line, edited there"));
+    assert.equal((await other.push()).exitCode, 0);
+
+    const pulled = await vault.pull();
+    assert.equal(pulled.exitCode, 0);
+    assert.equal(await vault.noteExists("local-rename-before.md"), false, "the old name must not be recreated");
+    const merged = await vault.readNote("local-rename-after.md");
+    assert.match(merged, /first line, edited here/);
+    assert.match(merged, /second line, edited there/);
+
+    assert.equal((await vault.push()).exitCode, 0);
+    // A second push picks up the local edit, which the move itself doesn't carry.
+    assert.equal((await vault.push()).exitCode, 0);
+    await vault.pull();
+    assert.equal((await vault.status()).exitCode, 0, "the vault should settle after the move and the edit");
+    const holders = (await vault.listNotes()).filter((name) => name.startsWith("local-rename-"));
+    assert.deepEqual(holders, ["local-rename-after.md"], "exactly one file holds the note - no duplicate came back");
+
+    const web = await (await run.oracle()).readNote(noteId);
+    assert.match(web.plainText, /first line, edited here/);
+    assert.match(web.plainText, /second line, edited there/);
+  });
+
   it("pushes a deletion that an open web client merges into its held copy - not just re-decodes", async () => {
     // The other web-oracle tests read cold: the client decodes our stored
     // bytes, so it agrees with whatever we wrote by construction. This one
