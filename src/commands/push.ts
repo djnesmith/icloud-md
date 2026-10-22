@@ -49,7 +49,8 @@ import { countUnchangedNotes, serializePlanEntry, stripFilePrefix, type PlanEntr
 import { decodeNoteFormat, formatsRoundTripEqual, type FormatParagraph } from "../notes/noteFormat.js";
 import { compressNoteDocument, decodeNoteBodyText, decodeNoteString, decompressNoteDocument } from "../notes/noteText.js";
 import { joinFrontmatter, splitFrontmatter } from "../notes/frontmatter.js";
-import { parseNoteMarkdown } from "../notes/parseNoteMarkdown.js";
+import { parseNoteMarkdown, type ParseNoteMarkdownResult } from "../notes/parseNoteMarkdown.js";
+import { readsBackFaithfully } from "../notes/renderNoteMarkdown.js";
 import {
   restoreTitleParagraphText,
   splitTitleParagraph,
@@ -1096,7 +1097,7 @@ export async function buildPushPlan(
     let payloadBase64: string;
     let plainText: string;
     try {
-      const parsed = parseNoteMarkdown(localText);
+      const parsed = parseLocalMarkdown(localText);
       if (parsed.status !== "ok") {
         entries.push({ kind: "create", file, resolution: "refused", reason: parsed.reason });
         continue;
@@ -1585,7 +1586,7 @@ async function prepareUpdate(
     );
   }
 
-  const parsed = parseNoteMarkdown(localText);
+  const parsed = parseLocalMarkdown(localText);
   if (parsed.status !== "ok") {
     summary.refused.push(`${entry.file}: ${parsed.reason}. Run "icloud-md restore ${entry.file}" to discard your local edit.`);
     return undefined;
@@ -1648,7 +1649,7 @@ async function prepareEmbedCandidate(
   }
   // The placeholder-form markdown (markers and table blocks re-spliced to
   // U+FFFC) is what parses back into the desired text + formatting.
-  const parsed = parseNoteMarkdown(plan.reconstructedBodyText);
+  const parsed = parseLocalMarkdown(plan.reconstructedBodyText);
   if (parsed.status !== "ok") {
     summary.refused.push(`${entry.file}: ${parsed.reason}. Run "icloud-md restore ${entry.file}" to discard your local edit.`);
     return undefined;
@@ -1992,6 +1993,25 @@ function requestedRetitle(classified: OkNoteRecordResult, requestedTitle: string
     return undefined;
   }
   return requestedTitle === classified.format?.[0]?.text ? undefined : requestedTitle;
+}
+
+/**
+ * `parseNoteMarkdown`, plus the read-back check literal lines owe: markdown
+ * Apple Notes can't express is pushed as literal text, which is only safe
+ * if the next pull renders it into a file that parses back to the same
+ * note - otherwise the push would leave the note read-only. Notes with no
+ * literal lines skip the check; nothing about them changed.
+ */
+function parseLocalMarkdown(markdown: string): ParseNoteMarkdownResult {
+  const parsed = parseNoteMarkdown(markdown);
+  if (parsed.status === "ok" && parsed.literalLines > 0 && !readsBackFaithfully(parsed.paragraphs)) {
+    return {
+      status: "unsupported",
+      reason:
+        "markdown Apple Notes can't express would be carried as literal text, but it wouldn't read back as the same note on the next pull",
+    };
+  }
+  return parsed;
 }
 
 /**

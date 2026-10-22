@@ -144,6 +144,68 @@ describe("live sync against a real iCloud account", { concurrency: 1, skip: enab
     assert.equal((await vault.status()).exitCode, 0, "the vault should settle after pushing an edit");
   });
 
+  it("pushes markdown Apple Notes can't express as literal text, and pulls it back unchanged", async () => {
+    const title = run.title("literal markdown canary");
+    const fileName = "literal-markdown-canary.md";
+    const body = [
+      "Run `npm test` first.",
+      "",
+      "---",
+      "",
+      "#### Deep heading",
+      "```itinerary",
+      "initialDate: 2026-12-16",
+      "```",
+      "",
+      "- item",
+      "  ```",
+      "  nested",
+      "  ```",
+      "",
+      "See a[^1].",
+      "",
+      "[^1]: The footnote.",
+    ];
+    await vault.writeNote(fileName, [`# ${title}`, "", ...body, ""].join("\n"));
+
+    const pushed = await vault.push();
+    assert.equal(pushed.exitCode, 0, `push should accept the literal markdown:\n${pushed.stdout}`);
+    const noteId = await vault.noteId(fileName);
+    assert.equal((await vault.status()).exitCode, 0, "the vault should settle after the push");
+
+    // Apple's client holds the markdown as plain text: no monospace, no
+    // invented formatting, the fence's language intact.
+    const web = await (await run.oracle()).readNote(noteId);
+    const kinds = web.paragraphs.filter((p) => p.text.trim() !== "").map((p) => `${p.kind}:${p.text.trim()}`);
+    assert.deepEqual(kinds, [
+      `title:${title}`,
+      "body:Run `npm test` first.",
+      "body:---",
+      "body:#### Deep heading",
+      "body:```itinerary",
+      "body:initialDate: 2026-12-16",
+      "body:```",
+      "bulletList:item",
+      "body:```",
+      "body:nested",
+      "body:```",
+      "body:See a[^1].",
+      "body:[^1]: The footnote.",
+    ]);
+
+    // Both a pull here and a fresh clone write back exactly what was pushed.
+    await vault.pull();
+    assert.equal(stripFrontmatter(await vault.readNote(fileName)).trim(), [`# ${title}`, "", ...body].join("\n"));
+    const second = await run.vault("literal-second");
+    const secondFile = await second.findByNoteId(noteId);
+    assert.ok(secondFile !== undefined, `a fresh clone should contain the note (${noteId})`);
+    assert.equal(
+      stripFrontmatter(await second.readNote(secondFile)).trim(),
+      stripFrontmatter(await vault.readNote(fileName)).trim(),
+      "a fresh clone should reproduce the same markdown",
+    );
+  });
+
   it("pulls a remote edit into a note renamed locally but not pushed, and the rename then pushes as a move", async () => {
     const title = run.title("local rename canary");
     await vault.writeNote("local-rename-before.md", [`# ${title}`, "", "first line", "", "second line", ""].join("\n"));

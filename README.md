@@ -309,11 +309,24 @@ resolution live.
   (`> [!NOTE] Title`), tags (`#project`), highlights (`==like this==`), and
   footnotes (`[^1]`) keep their notation in the local file instead of
   picking up the backslashes plain CommonMark would want
-  (`\[\[Note]]`, `\#project`). Markup that really *is* markdown — a `#`
-  heading, `[a](b)`, a `---` rule — still gets escaped, and every note is
-  re-parsed before the friendlier spelling is kept, so it can never cost
-  fidelity. Inside a table cell an alias pipe is written `[[Note\|alias]]`,
-  the form Obsidian itself requires there.
+  (`\[\[Note]]`, `\#project`). Text that would turn into different
+  formatting if written bare — a `#` heading typed as text on a phone,
+  `[a](b)`, `*stars*` — still gets escaped, and every note is re-parsed
+  before the friendlier spelling is kept, so it can never cost fidelity.
+  Inside a table cell an alias pipe is written `[[Note\|alias]]`, the form
+  Obsidian itself requires there.
+- **Markdown Apple Notes can't express is kept as text, not refused.**
+  Inline code, images, `---` rules, `####`–`######` headings, HTML blocks,
+  footnote and link definitions, pipe tables that aren't one of the note's
+  own tables, code or quotes nested in a list item, and fenced blocks with
+  a language (` ```dataview `, ` ```itinerary `) all push as their literal
+  markdown — you'll see the raw syntax in Notes — and come back from the
+  next pull as the same markdown. A push that couldn't come back that way
+  is refused, so this can never leave a note read-only. A fence's language
+  is the one case that used to be *silently dropped* (the block pushed as
+  monospace and came back as a plain ` ``` `); such a block now shows as
+  plain text in Notes instead of monospace, which is the price of keeping
+  its language.
 - **Ordinary words keep their punctuation.** Because GFM turns `www.…`,
   `https://…` and `name@host` into links on sight, plain CommonMark escapes
   the punctuation that *might* start one — anywhere, in any word. That gave
